@@ -1,0 +1,10 @@
+/tobbie
+/tobbie-mcp
+*.test
+/main
+
+# large product artifacts (ship with the hardware / Velleman) - not in the repo
+*.pdf
+*.apk
+*.hex
+*.js
