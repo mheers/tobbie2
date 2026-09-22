@@ -212,13 +212,28 @@ tobbie-mcp
 
 Tools: `scan`, `connect`, `status`, `move`, `face`, `face-set`,
 `text`, `stop-sign`, `disconnect` — one tool per CLI command, each
-opening a fresh BLE link like the CLI does.
+opening a fresh BLE link like the CLI does — plus `move-natural` when
+`TYPESAFE_API_KEY` is set (see below).
 
 The `move` tool accepts optional `steps` (e.g. `steps: 1` for "geh
 einen Schritt", `steps: 5` for five) or `duration_ms` (e.g. `300` for
 "dreh dich ein bisschen"); both make the robot stop automatically
 after the movement. Without them the robot keeps moving until a stop
 command. `steps` and `duration_ms` are mutually exclusive.
+
+### Natural-language movement (optional)
+
+With `TYPESAFE_API_KEY` set, the server also registers `move-natural`,
+which resolves a request like *"dreh dich ein bisschen nach links"* or
+*"geh drei Schritte vorwärts"* into a movement. Five typed
+[TypeSafe](https://docs.typesafe.ai) System One judgements classify the
+movement, the side and whether the request is bounded, and grade how
+far. The resolver in `internal/judge` then applies the calibration and
+the caps (8 steps, 3 s) in code and refuses a request whose direction
+or side is below the confidence gates instead of guessing. A typical
+call takes ~300 ms and ~1200 tokens. The utterance is sent to the
+TypeSafe API; `TYPESAFE_MODEL` pins a model version and
+`TYPESAFE_BASE_URL` points at another deployment.
 
 Set `TOBBIE_SIM=1` to run against the in-memory mock; results then
 include the exact wire bytes (`mock wire: "ZHi\n"`), and `connect`
@@ -244,12 +259,16 @@ cmd/tobbie/main.go      cobra CLI
 cmd/tobbie-mcp/main.go  MCP server (mark3labs/mcp-go)
 internal/tobbie/
   tobbie.go             Robot interface, Direction, Face, grid parsing
+  intent.go             resolved movement plans (MoveIntent)
   commands.go           NUS UUIDs + wire encoding
   ble.go                go-ble transport (incl. random-address dial)
   scan.go               shared BLE scan helper
   mock.go               in-memory robot
   config.go             saved address
   tobbie_test.go        wire encoding + mock tests
+internal/judge/
+  judge.go              TypeSafe System One client
+  move.go               movement question set + resolver
 ```
 
 ## License

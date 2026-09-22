@@ -22,6 +22,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/mheers/tobbie2/internal/judge"
 	"github.com/mheers/tobbie2/internal/tobbie"
 )
 
@@ -43,6 +44,10 @@ func main() {
 	rs.start()
 	defer rs.close()
 
+	if !rs.judge.Configured() {
+		fmt.Fprintln(os.Stderr, "tobbie-mcp: TYPESAFE_API_KEY not set; move-natural is disabled")
+	}
+
 	registerTools(s, rs)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -63,10 +68,11 @@ type robotServer struct {
 	addr  string
 	robot *tobbie.BLE
 	mock  *tobbie.Mock
+	judge *judge.Client
 }
 
 func newRobotServer() *robotServer {
-	rs := &robotServer{sim: os.Getenv("TOBBIE_SIM") != ""}
+	rs := &robotServer{sim: os.Getenv("TOBBIE_SIM") != "", judge: judge.NewClient()}
 	if !rs.sim {
 		rs.robot = tobbie.NewBLE()
 		if cfg, err := tobbie.LoadConfig(); err == nil {
@@ -188,6 +194,9 @@ func registerTools(s *server.MCPServer, rs *robotServer) {
 	s.AddTool(connectTool(), rs.handleConnect)
 	s.AddTool(statusTool(), rs.handleStatus)
 	s.AddTool(moveTool(), rs.handleMove)
+	if rs.judge.Configured() {
+		s.AddTool(moveNaturalTool(), rs.handleMoveNatural)
+	}
 	s.AddTool(faceTool(), rs.handleFace)
 	s.AddTool(faceSetTool(), rs.handleFaceSet)
 	s.AddTool(textTool(), rs.handleText)
@@ -221,6 +230,14 @@ func moveTool() mcp.Tool {
 		mcp.WithString("direction", mcp.Required(), mcp.Description("one of: "+strings.Join(directionNames(), ", "))),
 		mcp.WithNumber("steps", mcp.Description("number of discrete steps; each step holds the movement for ~625ms before stopping. Mutually exclusive with duration_ms.")),
 		mcp.WithNumber("duration_ms", mcp.Description(fmt.Sprintf("how long to hold the movement in milliseconds before stopping (fine-grained turns). Calibrated on the robot: %d ms = a 180° turn in place (90° ≈ %d ms); scale proportionally for other angles. Mutually exclusive with steps.", tobbie.TurnCalibration180/time.Millisecond, tobbie.TurnCalibration180/time.Millisecond/2))),
+	)
+}
+
+// moveNaturalTool is registered only when TYPESAFE_API_KEY is set.
+func moveNaturalTool() mcp.Tool {
+	return mcp.NewTool("move-natural",
+		mcp.WithDescription("Resolve a natural-language movement request (German or English) and execute it. Use it when the direction or the distance is vague, e.g. \"dreh dich ein bisschen nach links\", \"geh ein paar Schritte rückwärts\", \"turn around\". A TypeSafe judgement resolves direction and amount; code applies the calibration and caps and refuses uncertain requests instead of guessing. For exact commands use move with direction plus steps or duration_ms."),
+		mcp.WithString("request", mcp.Required(), mcp.Description("the movement request in natural language, e.g. \"geh drei Schritte vorwärts\"")),
 	)
 }
 
@@ -402,6 +419,31 @@ func (rs *robotServer) handleMove(ctx context.Context, req mcp.CallToolRequest) 
 			return fmt.Sprintf("move: %s", d), nil
 		})
 	}
+}
+
+func (rs *robotServer) handleMoveNatural(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	text, err := str("request", req)
+	if err != nil {
+		return nil, err
+	}
+	jctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	res, err := rs.judge.InterpretMove(jctx, text)
+	if err != nil {
+		return nil, err
+	}
+	if !res.Intent.Executable() {
+		return textResult(fmt.Sprintf(
+			"cannot turn %q into a movement: %s.\nCall move with an explicit direction (%s) and optional steps or duration_ms.",
+			text, res.Reason, strings.Join(directionNames(), ", "))), nil
+	}
+	intent := res.Intent
+	return rs.run(ctx, func(r tobbie.Robot) (string, error) {
+		if err := intent.Execute(ctx, r); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("move: %s (from %q, confidence %.2f)", intent, text, res.Confidence()), nil
+	})
 }
 
 func (rs *robotServer) handleFace(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
