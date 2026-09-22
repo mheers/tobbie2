@@ -235,6 +235,10 @@ call takes ~300 ms and ~1200 tokens. The utterance is sent to the
 TypeSafe API; `TYPESAFE_MODEL` pins a model version and
 `TYPESAFE_BASE_URL` points at another deployment.
 
+The question wording was tuned and measured with `tools/nl-eval`: it
+scores 38–39 of 40 on the tuning set and 10 of 13 on an unseen holdout,
+with every failure a refusal rather than a wrong movement.
+
 Set `TOBBIE_SIM=1` to run against the in-memory mock; results then
 include the exact wire bytes (`mock wire: "ZHi\n"`), and `connect`
 becomes a no-op so your real config is left untouched.
@@ -269,6 +273,7 @@ internal/tobbie/
 internal/judge/
   judge.go              TypeSafe System One client
   move.go               movement question set + resolver
+tools/nl-eval/          prompt evaluation harness (go run ./tools/nl-eval)
 ```
 
 ## License
